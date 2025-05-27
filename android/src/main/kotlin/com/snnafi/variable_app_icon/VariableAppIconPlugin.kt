@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.util.Log;
 import android.app.Activity;
+import android.app.Application
+import android.os.Bundle
 
 import androidx.annotation.NonNull
 
@@ -30,23 +32,34 @@ class VariableAppIconPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
   /// when the Flutter Engine is detached from the Activity
   private lateinit var channel: MethodChannel
 
+  private var pendingIconId: String? = null
+  private var iconList: List<String>? = null
+
+  private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
+    override fun onActivityStopped(act: Activity) {
+      if (act == activity) {
+        maybeChangeIcon()
+      }
+    }
+
+    override fun onActivityCreated(act: Activity, savedInstanceState: Bundle?) {}
+    override fun onActivityStarted(act: Activity) {}
+    override fun onActivityResumed(act: Activity) {}
+    override fun onActivityPaused(act: Activity) {}
+    override fun onActivitySaveInstanceState(act: Activity, outState: Bundle) {}
+    override fun onActivityDestroyed(act: Activity) {}
+  }
+
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     binaryMessenger = flutterPluginBinding.binaryMessenger
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
     if (call.method == "changeAppIcon") {
-      var iconId: String = call.argument<String>("androidIconId")!!
-      val iconIds: List<String> = call.argument<List<String>>("androidIcons")!!
-      val ctx: Context = activity!!.applicationContext
-      val pm: PackageManager = ctx.getApplicationContext().getPackageManager()
-      for (i in iconIds) {
-        pm.setComponentEnabledSetting(
-                ComponentName(ctx.getPackageName(), i),
-                if (i == iconId) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP
-        )
-      }
+
+      pendingIconId = call.argument<String>("androidIconId")
+      iconList = call.argument<List<String>>("androidIcons")
+
       result.success("Success")
     } else {
       result.notImplemented()
@@ -57,6 +70,7 @@ class VariableAppIconPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     this.activity = binding.activity as Activity
     channel = MethodChannel(binaryMessenger!!, "variable_app_icon")
     channel.setMethodCallHandler(this)
+    this.activity?.application?.registerActivityLifecycleCallbacks(lifecycleCallbacks)
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
@@ -68,4 +82,32 @@ class VariableAppIconPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
   override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {}
 
   override fun onDetachedFromActivity() {}
+
+  private fun maybeChangeIcon() {
+    val ctx = activity?.applicationContext ?: return
+    val iconId = pendingIconId ?: return
+    val icons = iconList ?: return
+    val pm = ctx.packageManager
+
+    for (i in icons) {
+      val componentName = ComponentName(ctx.packageName, i)
+
+      val newState = when {
+        i == iconId -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        i == "appicon.DEFAULT" -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        else -> PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+      }
+
+      pm.setComponentEnabledSetting(
+        componentName,
+        newState,
+        PackageManager.DONT_KILL_APP
+      )
+    }
+
+    // чистим після роботи
+    pendingIconId = null
+    iconList = null
+  }
+
 }
